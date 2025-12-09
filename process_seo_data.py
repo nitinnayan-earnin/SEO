@@ -191,9 +191,15 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
     # Download if not in cache
     if df is None:
         print(f"[INFO] Downloading occupation data for state: {state_code}...")
+        print(f"[DEBUG] About to call extractor.get_state_data({state_code})...")
         try:
             df = extractor.get_state_data(state_code, clean_data=True)
-            print(f"[DEBUG] get_state_data returned: type={type(df)}, is None={df is None}, empty={df.empty if df is not None else 'N/A'}, rows={len(df) if df is not None else 0}")
+            print(f"[DEBUG] get_state_data returned: type={type(df)}, is None={df is None}")
+            if df is not None:
+                print(f"[DEBUG] DataFrame shape: {df.shape}, empty: {df.empty}, columns: {list(df.columns)[:5] if len(df.columns) > 0 else 'None'}")
+            else:
+                print(f"[DEBUG] DataFrame is None - extraction may have failed")
+            
             if df is not None and not df.empty:
                 # Save FULL dataframe to disk cache BEFORE truncation
                 try:
@@ -224,11 +230,30 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                 state_cache[state_code] = df
             else:
                 print(f"[WARN] No data returned for {state_code} (df is None or empty)")
+                # Save a marker file to indicate we tried but got no data
+                try:
+                    marker_file = os.path.join(cache_dir, f"{state_code}.no_data")
+                    with open(marker_file, 'w') as f:
+                        f.write(f"No data extracted for {state_code}\n")
+                        f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    print(f"[DEBUG] Created marker file: {marker_file}")
+                except Exception as marker_error:
+                    print(f"[WARN] Could not create marker file: {marker_error}")
                 state_cache[state_code] = None
         except Exception as e:
             print(f"[ERROR] Failed to fetch data for {state_code}: {e}")
             import traceback
             traceback.print_exc()
+            # Save error marker file
+            try:
+                error_file = os.path.join(cache_dir, f"{state_code}.error")
+                with open(error_file, 'w') as f:
+                    f.write(f"Error extracting data for {state_code}\n")
+                    f.write(f"Error: {str(e)}\n")
+                    f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                print(f"[DEBUG] Created error marker file: {error_file}")
+            except Exception:
+                pass
             state_cache[state_code] = None
             df = None
     
@@ -420,6 +445,18 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
         cache_dir = os.path.join(input_dir, "bls_cache")
         cache_dir = os.path.abspath(cache_dir)  # Ensure absolute path
         print(f"[STEP 2/5] Cache directory: {cache_dir}")
+        
+        # Test cache directory is writable
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            test_file = os.path.join(cache_dir, ".test_write")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            print(f"[STEP 2/5] ✓ Cache directory is writable: {cache_dir}")
+        except Exception as test_error:
+            print(f"[WARN] Cache directory may not be writable: {test_error}")
+            print(f"[WARN] Attempting to continue anyway...")
     except Exception as e:
         # Fallback to current directory
         cache_dir = os.path.abspath("bls_cache")
@@ -601,6 +638,25 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
     
     output_df.to_csv(output_csv, index=False)
     print(f"[STEP 5/5] ✓ Saved {len(output_df)} rows to {output_csv}")
+    
+    # Print cache directory summary
+    try:
+        if os.path.exists(cache_dir):
+            cache_files = os.listdir(cache_dir)
+            csv_files = [f for f in cache_files if f.endswith('.csv')]
+            marker_files = [f for f in cache_files if f.endswith('.no_data') or f.endswith('.error')]
+            print(f"\n[CACHE SUMMARY]")
+            print(f"  Cache directory: {cache_dir}")
+            print(f"  CSV files cached: {len(csv_files)}")
+            if csv_files:
+                print(f"  Cached states: {[f.replace('.csv', '') for f in csv_files]}")
+            if marker_files:
+                print(f"  Marker files (failed/empty): {len(marker_files)}")
+                print(f"  Marker files: {marker_files}")
+        else:
+            print(f"\n[WARN] Cache directory does not exist: {cache_dir}")
+    except Exception as e:
+        print(f"\n[WARN] Could not list cache directory: {e}")
     
     return output_df
 
