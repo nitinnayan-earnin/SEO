@@ -230,12 +230,16 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                 state_cache[state_code] = df
             else:
                 print(f"[WARN] No data returned for {state_code} (df is None or empty)")
+                print(f"[INFO] Selenium may not work in Databricks. To pre-populate cache:")
+                print(f"[INFO]   1. Run 'python download_all_bls_data.py' locally")
+                print(f"[INFO]   2. Upload the 'bls_cache' directory to Databricks")
                 # Save a marker file to indicate we tried but got no data
                 try:
                     marker_file = os.path.join(cache_dir, f"{state_code}.no_data")
                     with open(marker_file, 'w') as f:
                         f.write(f"No data extracted for {state_code}\n")
                         f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"\nTo fix: Run 'python download_all_bls_data.py' locally and upload bls_cache to Databricks\n")
                     print(f"[DEBUG] Created marker file: {marker_file}")
                 except Exception as marker_error:
                     print(f"[WARN] Could not create marker file: {marker_error}")
