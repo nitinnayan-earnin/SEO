@@ -434,26 +434,33 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
         temperature: Temperature setting
         verbose: Whether to print progress
     """
-    # Check if we're in Databricks environment
-    try:
-        from pyspark.sql import SparkSession  # type: ignore
-        spark = SparkSession.getActiveSession()
-        is_databricks = spark is not None
-    except:
-        is_databricks = False
-        spark = None
+    # Try to load from input table first, fall back to CSV if that fails
+    use_tables = False
+    spark = None
     
-    # Load input data
-    if is_databricks and input_table:
-        print(f"[STEP 1/5] Loading input from Databricks table: {input_table}...")
-        df = spark.table(input_table).toPandas()
-        print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from table")
+    if input_table:
+        try:
+            from pyspark.sql import SparkSession  # type: ignore
+            spark = SparkSession.builder.getOrCreate()
+            print(f"[STEP 1/5] Loading input from Databricks table: {input_table}...")
+            df = spark.table(input_table).toPandas()
+            # print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from table")
+            use_tables = True
+        except Exception as e:
+            print(f"[WARN] Failed to load from table {input_table}: {e}")
+            print(f"[WARN] Falling back to CSV input...")
+            if input_source:
+                print(f"[STEP 1/5] Loading input CSV: {input_source}...")
+                df = pd.read_csv(input_source)
+                print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from CSV")
+            else:
+                raise ValueError(f"Failed to load from table and no input_source provided: {e}")
     elif input_source:
         print(f"[STEP 1/5] Loading input CSV: {input_source}...")
         df = pd.read_csv(input_source)
         print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from CSV")
     else:
-        raise ValueError("Either input_table (for Databricks) or input_source (for local) must be provided")
+        raise ValueError("Either input_table or input_source must be provided")
     
     # Apply num_entries limit
     original_count = len(df)
@@ -478,7 +485,7 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
     # Determine cache directory - use absolute path
     # This ensures cache persists in Databricks
     try:
-        if is_databricks:
+        if use_tables:
             # In Databricks, use dbfs or local path
             cache_dir = "/dbfs/bls_cache" if os.path.exists("/dbfs") else os.path.abspath("bls_cache")
         else:
@@ -683,10 +690,13 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
         summary_df = pd.DataFrame([summary_row])
         output_df = pd.concat([output_df, summary_df], ignore_index=True)
     
-    # Save output
-    if is_databricks and output_table:
+    # Save output - use same mode as input (table or CSV)
+    if use_tables and output_table:
         print(f"[STEP 5/5] Saving results to Databricks table: {output_table}...")
         # Convert pandas DataFrame to Spark DataFrame
+        if spark is None:
+            from pyspark.sql import SparkSession  # type: ignore
+            spark = SparkSession.builder.getOrCreate()
         spark_df = spark.createDataFrame(output_df)
         # Write to table with overwrite mode
         spark_df.write.mode("overwrite") \
@@ -698,7 +708,10 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
         output_df.to_csv(output_dest, index=False)
         print(f"[STEP 5/5] ✓ Saved {len(output_df)} rows to {output_dest}")
     else:
-        raise ValueError("Either output_table (for Databricks) or output_dest (for local) must be provided")
+        if use_tables:
+            raise ValueError("output_table must be provided when using table input")
+        else:
+            raise ValueError("output_dest must be provided when using CSV input")
     
     # Print cache directory summary
     try:
@@ -725,44 +738,38 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
 if __name__ == "__main__":
     import sys
     
-    # Check if we're in Databricks
-    try:
-        from pyspark.sql import SparkSession  # type: ignore
-        spark = SparkSession.getActiveSession()
-        is_databricks = spark is not None
-    except:
-        is_databricks = False
+    # Default settings - try Databricks tables first
+    input_table = "datascience_scratchpad.paystub_employer_city_metadata_pseo_251208"
+    output_table = "datascience_scratchpad.pseo_output_251209"
+    input_source = None
+    output_dest = None
     
-    # Default settings
-    if is_databricks:
-        # Default to Databricks tables
-        input_table = "datascience_scratchpad.paystub_employer_city_metadata_pseo_251208"
-        output_table = "datascience_scratchpad.pseo_output_251209"
-        input_source = None
-        output_dest = None
-    else:
-        # Default to CSV files for local execution
-        input_source = "Untitled spreadsheet - Sheet1 (1).csv"
-        output_dest = "SEO_test_output.csv"
-        input_table = None
-        output_table = None
-        print("Databricks not working, running locally!")
-    
-    # Get num_entries from environment or command line
-    num_entries = 5
+    # Get num_entries from environment or use default
+    num_entries = os.getenv("NUM_ENTRIES", "full")
     
     # Allow command line arguments
-    # Usage: python process_seo_data.py [input_source/input_table] [output_dest/output_table] [num_entries]
+    # Usage: python process_seo_data.py [input_table/input_source] [output_table/output_dest] [num_entries]
     if len(sys.argv) > 1:
-        if is_databricks:
-            input_table = sys.argv[1]
+        # Try to determine if it's a table (contains dot) or file path
+        arg1 = sys.argv[1]
+        if '.' in arg1 and '/' not in arg1 and '\\' not in arg1:
+            # Looks like a table name
+            input_table = arg1
+            input_source = None
         else:
-            input_source = sys.argv[1]
+            # Looks like a file path
+            input_source = arg1
+            input_table = None
     if len(sys.argv) > 2:
-        if is_databricks:
-            output_table = sys.argv[2]
+        arg2 = sys.argv[2]
+        if '.' in arg2 and '/' not in arg2 and '\\' not in arg2:
+            # Looks like a table name
+            output_table = arg2
+            output_dest = None
         else:
-            output_dest = sys.argv[2]
+            # Looks like a file path
+            output_dest = arg2
+            output_table = None
     if len(sys.argv) > 3:
         num_entries = sys.argv[3]
     
@@ -790,7 +797,7 @@ if __name__ == "__main__":
         )
         print("\n" + "=" * 60)
         print("✓ ALL PROCESSING COMPLETE!")
-        if is_databricks and output_table:
+        if output_table:
             print(f"✓ Results saved to table: {output_table}")
         elif output_dest:
             print(f"✓ Results saved to: {output_dest}")
