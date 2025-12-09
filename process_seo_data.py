@@ -158,8 +158,13 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
     state_code = str(state_code).strip().upper()
     
     # Create cache directory if it doesn't exist
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"{state_code}.csv")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{state_code}.csv")
+        print(f"[DEBUG] Cache directory: {os.path.abspath(cache_dir)}, Cache file: {cache_file}")
+    except Exception as e:
+        print(f"[ERROR] Failed to create cache directory {cache_dir}: {e}")
+        cache_file = os.path.join(cache_dir, f"{state_code}.csv")
     
     # Check in-memory cache first
     if state_code in state_cache:
@@ -182,30 +187,46 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
         print(f"[INFO] Downloading occupation data for state: {state_code}...")
         try:
             df = extractor.get_state_data(state_code, clean_data=True)
+            print(f"[DEBUG] get_state_data returned: type={type(df)}, is None={df is None}, empty={df.empty if df is not None else 'N/A'}, rows={len(df) if df is not None else 0}")
             if df is not None and not df.empty:
-                # Save to disk cache
-                df.to_csv(cache_file, index=False)
-                print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code}")
+                # Save FULL dataframe to disk cache BEFORE truncation
+                try:
+                    df.to_csv(cache_file, index=False)
+                    # Verify file was created
+                    if os.path.exists(cache_file):
+                        file_size = os.path.getsize(cache_file)
+                        print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code} to {cache_file} ({file_size} bytes)")
+                    else:
+                        print(f"[WARN] Cache file was not created: {cache_file}")
+                except Exception as save_error:
+                    print(f"[WARN] Failed to save cache file {cache_file}: {save_error}")
+                    import traceback
+                    traceback.print_exc()
+                
                 # Also store in memory cache
                 state_cache[state_code] = df
             else:
-                print(f"[WARN] No data returned for {state_code}")
+                print(f"[WARN] No data returned for {state_code} (df is None or empty)")
                 state_cache[state_code] = None
         except Exception as e:
             print(f"[ERROR] Failed to fetch data for {state_code}: {e}")
+            import traceback
+            traceback.print_exc()
             state_cache[state_code] = None
             df = None
     
     if df is None or df.empty:
         return ""
     
+    # Create a copy for truncation (don't modify cached dataframe)
+    df_limited = df.copy()
     # Limit rows to avoid exceeding token limits
-    if len(df) > max_rows:
-        df = df.head(max_rows)
+    if len(df_limited) > max_rows:
+        df_limited = df_limited.head(max_rows)
     
-    # Convert DataFrame to CSV string
+    # Convert limited DataFrame to CSV string
     csv_buffer = StringIO()
-    df.to_csv(csv_buffer, index=False)
+    df_limited.to_csv(csv_buffer, index=False)
     return csv_buffer.getvalue()
 
 
