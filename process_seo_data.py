@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage
 import time
 import os
 from io import StringIO
+from tqdm import tqdm
 
 
 def calculate_openai_cost(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -74,7 +75,7 @@ def parse_hourly_rates(rate_str: str) -> List[str]:
                  The CSV has escaped quotes like '{""25.72"": 1}'
         
     Returns:
-        List of hourly rate strings, or empty list if empty/invalid
+        List of hourly rate strings (excluding NaN), or empty list if empty/invalid
     """
     if pd.isna(rate_str) or rate_str == '' or rate_str == '{}':
         return []
@@ -85,8 +86,8 @@ def parse_hourly_rates(rate_str: str) -> List[str]:
         cleaned = rate_str.replace('""', '"')
         # Parse as JSON
         rate_dict = json.loads(cleaned)
-        # Extract keys (the hourly rates)
-        rates = list(rate_dict.keys())
+        # Extract keys (the hourly rates) and filter out NaN values
+        rates = [rate for rate in rate_dict.keys() if str(rate).upper() != 'NAN']
         return rates
     except (json.JSONDecodeError, AttributeError, TypeError) as e:
         # Try regex fallback for malformed JSON
@@ -94,9 +95,13 @@ def parse_hourly_rates(rate_str: str) -> List[str]:
         # Pattern matches: "number" or ""number""
         rates = re.findall(r'"{1,2}([0-9]+\.?[0-9]*)"{1,2}', rate_str)
         if rates:
+            # Filter out NaN values
+            rates = [rate for rate in rates if str(rate).upper() != 'NAN']
             return rates
         # If still no match, try simpler pattern
         rates = re.findall(r'([0-9]+\.[0-9]+)', rate_str)
+        # Filter out NaN values
+        rates = [rate for rate in rates if str(rate).upper() != 'NAN']
         return rates
 
 
@@ -109,7 +114,7 @@ def parse_rate_counts(rate_str: str) -> Dict[str, int]:
                  The CSV has escaped quotes like '{""25.72"": 1}'
         
     Returns:
-        Dictionary mapping rate strings to counts
+        Dictionary mapping rate strings to counts (excluding NaN entries)
     """
     if pd.isna(rate_str) or rate_str == '' or rate_str == '{}':
         return {}
@@ -120,7 +125,10 @@ def parse_rate_counts(rate_str: str) -> Dict[str, int]:
         cleaned = rate_str.replace('""', '"')
         # Parse as JSON
         rate_dict = json.loads(cleaned)
-        return rate_dict
+        # Filter out NaN keys (case-insensitive)
+        filtered_dict = {rate: count for rate, count in rate_dict.items() 
+                        if str(rate).upper() != 'NAN'}
+        return filtered_dict
     except (json.JSONDecodeError, AttributeError, TypeError):
         # Try regex fallback for malformed JSON
         # Extract numbers and their counts
@@ -129,7 +137,9 @@ def parse_rate_counts(rate_str: str) -> Dict[str, int]:
         pattern = r'"{1,2}([0-9]+\.?[0-9]*)"{1,2}:\s*([0-9]+)'
         matches = re.findall(pattern, rate_str)
         for rate, count in matches:
-            result[rate] = int(count)
+            # Filter out NaN values
+            if str(rate).upper() != 'NAN':
+                result[rate] = int(count)
         return result
 
 
@@ -505,7 +515,7 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
     total_input_tokens = 0
     total_output_tokens = 0
     
-    for idx, row in df.iterrows():
+    for idx, row in tqdm(df.iterrows()):
         print(f"[PROGRESS] Row {idx + 1}/{total_rows}: {row['employer_name']} - {row['employee_city']}, {row['employee_state']}")
         
         # Extract basic info
@@ -516,7 +526,6 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
         
         # Skip if missing state (handle NaN, None, empty string, or whitespace-only)
         if pd.isna(employee_state) or employee_state is None or str(employee_state).strip() == '':
-            print(f"  → Skipped: Missing state information")
             skipped_count += 1
             continue
         
@@ -528,7 +537,6 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
         
         # Skip if no hourly rates
         if not hourly_rates:
-            print(f"  → Skipped: No hourly rates found")
             skipped_count += 1
             continue
         
@@ -537,7 +545,7 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
         
         # Process each hourly rate
         for rate_idx, hourly_rate in enumerate(hourly_rates):
-            print(f"  → Processing rate {rate_idx + 1}/{len(hourly_rates)}: ${hourly_rate}/hr")
+            # print(f"  → Processing rate {rate_idx + 1}/{len(hourly_rates)}: ${hourly_rate}/hr")
             
             # Format prompt
             prompt_text = format_prompt(
@@ -546,7 +554,7 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
             )
             
             # Call OpenAI API
-            print(f"    → Calling OpenAI API...", end=" ", flush=True)
+            # print(f"    → Calling OpenAI API...", end=" ", flush=True)
             response, token_usage = call_openai_api(llm, prompt_text)
             
             # Extract token counts
@@ -558,7 +566,7 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
             total_output_tokens += output_tokens
             
             if response:
-                print("✓ Success")
+                # print("✓ Success")
                 # Parse response
                 predicted_titles, confidence, source, reasoning = parse_api_response(response)
                 
