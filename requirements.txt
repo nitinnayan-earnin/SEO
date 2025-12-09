@@ -1,10 +1,15 @@
-pandas>=2.0.0
+# Core dependencies compatible with SageMaker
+pandas>=1.5.0,<2.0.0  # Compatible with sparkmagic
 langchain-openai>=0.1.0
-langchain-core>=0.1.0
+langchain-core>=0.3.72,<1.0.0  # Compatible with langchain 0.3.27
 requests>=2.31.0
 selenium>=4.15.0
 beautifulsoup4>=4.12.0
 httpx>=0.25.0
+
+# SageMaker compatibility
+pydynamodb>=0.7.4  # Required by sagemaker-studio
+boto3>=1.37.24  # Required by langchain-aws
 
 
 
