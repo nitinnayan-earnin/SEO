@@ -135,16 +135,17 @@ def parse_rate_counts(rate_str: str) -> Dict[str, int]:
 
 def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str, 
                        state_cache: Dict[str, Optional[pd.DataFrame]], 
-                       max_rows: int = 100) -> str:
+                       max_rows: int = 100, cache_dir: str = "bls_cache") -> str:
     """
-    Get state occupation table as CSV string, using cache.
+    Get state occupation table as CSV string, using disk cache and in-memory cache.
     Limits the number of rows to avoid exceeding token limits.
     
     Args:
         extractor: BLSOESDataExtractor instance
         state_code: Two-letter state code
-        state_cache: Dictionary to cache state data
+        state_cache: Dictionary to cache state data in memory
         max_rows: Maximum number of rows to include (default: 100)
+        cache_dir: Directory to store cached state data files (default: "bls_cache")
         
     Returns:
         CSV string of state occupation data, or empty string if unavailable
@@ -156,16 +157,40 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
     # Convert to string, strip whitespace, and uppercase
     state_code = str(state_code).strip().upper()
     
-    # Check cache first
+    # Create cache directory if it doesn't exist
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{state_code}.csv")
+    
+    # Check in-memory cache first
     if state_code in state_cache:
         df = state_cache[state_code]
+    # Check disk cache
+    elif os.path.exists(cache_file):
+        print(f"[INFO] Loading cached data for state: {state_code} from disk...")
+        try:
+            df = pd.read_csv(cache_file)
+            state_cache[state_code] = df  # Also store in memory cache
+            print(f"[INFO] Successfully loaded {len(df)} rows for {state_code} from cache")
+        except Exception as e:
+            print(f"[WARN] Failed to load cache file for {state_code}: {e}, will download...")
+            df = None
     else:
-        # Fetch state data
-        print(f"[INFO] Fetching occupation data for state: {state_code}...")
+        df = None
+    
+    # Download if not in cache
+    if df is None:
+        print(f"[INFO] Downloading occupation data for state: {state_code}...")
         try:
             df = extractor.get_state_data(state_code, clean_data=True)
-            state_cache[state_code] = df
-            print(f"[INFO] Successfully fetched {len(df)} rows for {state_code}")
+            if df is not None and not df.empty:
+                # Save to disk cache
+                df.to_csv(cache_file, index=False)
+                print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code}")
+                # Also store in memory cache
+                state_cache[state_code] = df
+            else:
+                print(f"[WARN] No data returned for {state_code}")
+                state_cache[state_code] = None
         except Exception as e:
             print(f"[ERROR] Failed to fetch data for {state_code}: {e}")
             state_cache[state_code] = None
