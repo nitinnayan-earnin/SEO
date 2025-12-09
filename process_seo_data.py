@@ -174,8 +174,7 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
     try:
         os.makedirs(cache_dir, exist_ok=True)
         cache_file = os.path.join(cache_dir, f"{state_code}.csv")
-        cache_file = os.path.abspath(cache_file)  # Ensure absolute path
-        print(f"[DEBUG] Cache directory: {cache_dir}, Cache file: {cache_file}")
+        cache_file = os.path.abspath(cache_file) 
     except Exception as e:
         print(f"[ERROR] Failed to create cache directory {cache_dir}: {e}")
         import traceback
@@ -187,11 +186,11 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
         df = state_cache[state_code]
     # Check disk cache
     elif os.path.exists(cache_file):
-        print(f"[INFO] Loading cached data for state: {state_code} from disk...")
+        # print(f"[INFO] Loading cached data for state: {state_code} from disk...")
         try:
             df = pd.read_csv(cache_file)
             state_cache[state_code] = df  # Also store in memory cache
-            print(f"[INFO] Successfully loaded {len(df)} rows for {state_code} from cache")
+            # print(f"[INFO] Successfully loaded {len(df)} rows for {state_code} from cache")
         except Exception as e:
             print(f"[WARN] Failed to load cache file for {state_code}: {e}, will download...")
             df = None
@@ -200,15 +199,12 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
     
     # Download if not in cache
     if df is None:
-        print(f"[INFO] Downloading occupation data for state: {state_code}...")
-        print(f"[DEBUG] About to call extractor.get_state_data({state_code})...")
+        # print(f"[INFO] Downloading occupation data for state: {state_code}...")
+        # print(f"[DEBUG] About to call extractor.get_state_data({state_code})...")
         try:
             df = extractor.get_state_data(state_code, clean_data=True)
-            print(f"[DEBUG] get_state_data returned: type={type(df)}, is None={df is None}")
-            if df is not None:
-                print(f"[DEBUG] DataFrame shape: {df.shape}, empty: {df.empty}, columns: {list(df.columns)[:5] if len(df.columns) > 0 else 'None'}")
-            else:
-                print(f"[DEBUG] DataFrame is None - extraction may have failed")
+            # print(f"[DEBUG] get_state_data returned: type={type(df)}, is None={df is None}")
+            # print(f"[DEBUG] DataFrame is None - extraction may have failed")
             
             if df is not None and not df.empty:
                 # Save FULL dataframe to disk cache BEFORE truncation
@@ -217,12 +213,12 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                     # Verify file was created
                     if os.path.exists(cache_file):
                         file_size = os.path.getsize(cache_file)
-                        print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code}")
-                        print(f"[INFO] Cache file: {cache_file} ({file_size} bytes)")
+                        # print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code}")
+                        # print(f"[INFO] Cache file: {cache_file} ({file_size} bytes)")
                         # List cache directory contents for verification
                         try:
                             cache_files = [f for f in os.listdir(cache_dir) if f.endswith('.csv')]
-                            print(f"[INFO] Cache directory now contains {len(cache_files)} files: {cache_files}")
+                            # print(f"[INFO] Cache directory now contains {len(cache_files)} files: {cache_files}")
                         except Exception:
                             pass  # Ignore listing errors
                     else:
@@ -240,9 +236,9 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                 state_cache[state_code] = df
             else:
                 print(f"[WARN] No data returned for {state_code} (df is None or empty)")
-                print(f"[INFO] Selenium may not work in Databricks. To pre-populate cache:")
-                print(f"[INFO]   1. Run 'python download_all_bls_data.py' locally")
-                print(f"[INFO]   2. Upload the 'bls_cache' directory to Databricks")
+                # print(f"[INFO] Selenium may not work in Databricks. To pre-populate cache:")
+                # print(f"[INFO]   1. Run 'python download_all_bls_data.py' locally")
+                # print(f"[INFO]   2. Upload the 'bls_cache' directory to Databricks")
                 # Save a marker file to indicate we tried but got no data
                 try:
                     marker_file = os.path.join(cache_dir, f"{state_code}.no_data")
@@ -250,7 +246,7 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                         f.write(f"No data extracted for {state_code}\n")
                         f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                         f.write(f"\nTo fix: Run 'python download_all_bls_data.py' locally and upload bls_cache to Databricks\n")
-                    print(f"[DEBUG] Created marker file: {marker_file}")
+                    # print(f"[DEBUG] Created marker file: {marker_file}")
                 except Exception as marker_error:
                     print(f"[WARN] Could not create marker file: {marker_error}")
                 state_cache[state_code] = None
@@ -265,7 +261,7 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                     f.write(f"Error extracting data for {state_code}\n")
                     f.write(f"Error: {str(e)}\n")
                     f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                print(f"[DEBUG] Created error marker file: {error_file}")
+                # print(f"[DEBUG] Created error marker file: {error_file}")
             except Exception:
                 pass
             state_cache[state_code] = None
