@@ -423,9 +423,13 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
             print(f"    → Calling OpenAI API...", end=" ", flush=True)
             response, token_usage = call_openai_api(llm, prompt_text)
             
+            # Extract token counts
+            input_tokens = token_usage.get('input_tokens', 0)
+            output_tokens = token_usage.get('output_tokens', 0)
+            
             # Track token usage
-            total_input_tokens += token_usage.get('input_tokens', 0)
-            total_output_tokens += token_usage.get('output_tokens', 0)
+            total_input_tokens += input_tokens
+            total_output_tokens += output_tokens
             
             if response:
                 print("✓ Success")
@@ -458,6 +462,12 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
                 result_row['source'] = source
                 result_row['reasoning'] = reasoning
                 
+                # Add token usage and cost for this API call
+                result_row['input_tokens'] = input_tokens
+                result_row['output_tokens'] = output_tokens
+                result_row['total_tokens'] = input_tokens + output_tokens
+                result_row['cost_usd'] = calculate_openai_cost(model_name, input_tokens, output_tokens)
+                
                 results.append(result_row)
                 processed_count += 1
             else:
@@ -483,6 +493,27 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
     # Create output DataFrame
     print(f"[STEP 5/5] Saving results to: {output_csv}...")
     output_df = pd.DataFrame(results)
+    
+    # Add summary row with totals if we have results
+    if len(output_df) > 0 and total_input_tokens > 0:
+        # Create a summary row with totals
+        summary_row = {}
+        # Fill all columns with empty values except the summary columns
+        for col in output_df.columns:
+            if col not in ['input_tokens', 'output_tokens', 'total_tokens', 'cost_usd']:
+                summary_row[col] = None
+        
+        # Add summary values
+        summary_row['employer_name'] = 'TOTAL SUMMARY'
+        summary_row['input_tokens'] = total_input_tokens
+        summary_row['output_tokens'] = total_output_tokens
+        summary_row['total_tokens'] = total_input_tokens + total_output_tokens
+        summary_row['cost_usd'] = total_cost
+        
+        # Append summary row
+        summary_df = pd.DataFrame([summary_row])
+        output_df = pd.concat([output_df, summary_df], ignore_index=True)
+    
     output_df.to_csv(output_csv, index=False)
     print(f"[STEP 5/5] ✓ Saved {len(output_df)} rows to {output_csv}")
     
