@@ -157,13 +157,19 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
     # Convert to string, strip whitespace, and uppercase
     state_code = str(state_code).strip().upper()
     
+    # Ensure cache_dir is absolute path
+    cache_dir = os.path.abspath(cache_dir)
+    
     # Create cache directory if it doesn't exist
     try:
         os.makedirs(cache_dir, exist_ok=True)
         cache_file = os.path.join(cache_dir, f"{state_code}.csv")
-        print(f"[DEBUG] Cache directory: {os.path.abspath(cache_dir)}, Cache file: {cache_file}")
+        cache_file = os.path.abspath(cache_file)  # Ensure absolute path
+        print(f"[DEBUG] Cache directory: {cache_dir}, Cache file: {cache_file}")
     except Exception as e:
         print(f"[ERROR] Failed to create cache directory {cache_dir}: {e}")
+        import traceback
+        traceback.print_exc()
         cache_file = os.path.join(cache_dir, f"{state_code}.csv")
     
     # Check in-memory cache first
@@ -195,11 +201,22 @@ def get_state_table_csv(extractor: BLSOESDataExtractor, state_code: str,
                     # Verify file was created
                     if os.path.exists(cache_file):
                         file_size = os.path.getsize(cache_file)
-                        print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code} to {cache_file} ({file_size} bytes)")
+                        print(f"[INFO] Successfully downloaded and cached {len(df)} rows for {state_code}")
+                        print(f"[INFO] Cache file: {cache_file} ({file_size} bytes)")
+                        # List cache directory contents for verification
+                        try:
+                            cache_files = [f for f in os.listdir(cache_dir) if f.endswith('.csv')]
+                            print(f"[INFO] Cache directory now contains {len(cache_files)} files: {cache_files}")
+                        except Exception:
+                            pass  # Ignore listing errors
                     else:
-                        print(f"[WARN] Cache file was not created: {cache_file}")
+                        print(f"[ERROR] Cache file was not created: {cache_file}")
+                        print(f"[ERROR] Current working directory: {os.getcwd()}")
+                        print(f"[ERROR] Cache directory exists: {os.path.exists(cache_dir)}")
                 except Exception as save_error:
-                    print(f"[WARN] Failed to save cache file {cache_file}: {save_error}")
+                    print(f"[ERROR] Failed to save cache file {cache_file}: {save_error}")
+                    print(f"[ERROR] Current working directory: {os.getcwd()}")
+                    print(f"[ERROR] Cache directory: {cache_dir}")
                     import traceback
                     traceback.print_exc()
                 
@@ -386,6 +403,28 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
     print(f"[STEP 2/5] Initializing state data extractor...")
     extractor = BLSOESDataExtractor(headless=True, verbose=False)  # Disable verbose from extractor
     state_cache: Dict[str, Optional[pd.DataFrame]] = {}
+    
+    # Determine cache directory - use absolute path based on input CSV location
+    # This ensures cache persists in Databricks
+    try:
+        # Try to get absolute path of input CSV
+        if os.path.isabs(input_csv):
+            input_dir = os.path.dirname(input_csv)
+        else:
+            input_dir = os.path.dirname(os.path.abspath(input_csv))
+        
+        # If input_dir is empty (file in current dir), use current directory
+        if not input_dir:
+            input_dir = os.getcwd()
+        
+        cache_dir = os.path.join(input_dir, "bls_cache")
+        cache_dir = os.path.abspath(cache_dir)  # Ensure absolute path
+        print(f"[STEP 2/5] Cache directory: {cache_dir}")
+    except Exception as e:
+        # Fallback to current directory
+        cache_dir = os.path.abspath("bls_cache")
+        print(f"[STEP 2/5] Using fallback cache directory: {cache_dir} (error: {e})")
+    
     print(f"[STEP 2/5] ✓ State extractor ready")
     
     # Initialize LangChain ChatOpenAI
@@ -453,7 +492,7 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
             continue
         
         # Get state table CSV (cached, limited to 100 rows to avoid token limit)
-        state_table_csv = get_state_table_csv(extractor, employee_state, state_cache, max_rows=100)
+        state_table_csv = get_state_table_csv(extractor, employee_state, state_cache, max_rows=100, cache_dir=cache_dir)
         
         # Process each hourly rate
         for rate_idx, hourly_rate in enumerate(hourly_rates):
