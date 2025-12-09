@@ -417,43 +417,83 @@ def parse_api_response(response: Optional[dict]) -> Tuple[List[str], List[Option
     return predicted_titles, confidence, source, reasoning
 
 
-def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o", 
+def process_seo_data(input_source: str = None, output_dest: str = None, 
+                    input_table: str = None, output_table: str = None,
+                    num_entries: str = "full", model: str = "gpt-4o", 
                     temperature: float = 0.0, verbose: bool = True):
     """
     Main function to process SEO data.
     
     Args:
-        input_csv: Path to input CSV file
-        output_csv: Path to output CSV file
+        input_source: Path to input CSV file (for local execution)
+        output_dest: Path to output CSV file (for local execution)
+        input_table: Databricks table name (e.g., 'datascience_scratchpad.paystub_employer_city_metadata_pseo_251208')
+        output_table: Databricks output table name (e.g., 'datascience_scratchpad.pseo_output_251209')
+        num_entries: Number of entries to process, or "full" for all entries
         model: OpenAI model name
         temperature: Temperature setting
         verbose: Whether to print progress
     """
-    # Load input CSV
-    print(f"[STEP 1/5] Loading input CSV: {input_csv}...")
-    df = pd.read_csv(input_csv)
-    print(f"[STEP 1/5] ✓ Loaded {len(df)} rows")
+    # Check if we're in Databricks environment
+    try:
+        from pyspark.sql import SparkSession  # type: ignore
+        spark = SparkSession.getActiveSession()
+        is_databricks = spark is not None
+    except:
+        is_databricks = False
+        spark = None
+    
+    # Load input data
+    if is_databricks and input_table:
+        print(f"[STEP 1/5] Loading input from Databricks table: {input_table}...")
+        df = spark.table(input_table).toPandas()
+        print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from table")
+    elif input_source:
+        print(f"[STEP 1/5] Loading input CSV: {input_source}...")
+        df = pd.read_csv(input_source)
+        print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from CSV")
+    else:
+        raise ValueError("Either input_table (for Databricks) or input_source (for local) must be provided")
+    
+    # Apply num_entries limit
+    original_count = len(df)
+    if num_entries != "full":
+        try:
+            num_entries_int = int(num_entries)
+            if num_entries_int > 0 and num_entries_int < original_count:
+                df = df.iloc[:num_entries_int].copy()
+                print(f"[STEP 1/5] Limited to {len(df)} entries (requested: {num_entries_int}, available: {original_count})")
+            elif num_entries_int >= original_count:
+                print(f"[STEP 1/5] Requested {num_entries_int} entries but only {original_count} available, processing all")
+        except ValueError:
+            print(f"[WARN] Invalid num_entries value: {num_entries}, processing all entries")
+    
+    print(f"[STEP 1/5] Processing {len(df)} rows")
     
     # Initialize state extractor
     print(f"[STEP 2/5] Initializing state data extractor...")
     extractor = BLSOESDataExtractor(headless=True, verbose=False)  # Disable verbose from extractor
     state_cache: Dict[str, Optional[pd.DataFrame]] = {}
     
-    # Determine cache directory - use absolute path based on input CSV location
+    # Determine cache directory - use absolute path
     # This ensures cache persists in Databricks
     try:
-        # Try to get absolute path of input CSV
-        if os.path.isabs(input_csv):
-            input_dir = os.path.dirname(input_csv)
+        if is_databricks:
+            # In Databricks, use dbfs or local path
+            cache_dir = "/dbfs/bls_cache" if os.path.exists("/dbfs") else os.path.abspath("bls_cache")
         else:
-            input_dir = os.path.dirname(os.path.abspath(input_csv))
-        
-        # If input_dir is empty (file in current dir), use current directory
-        if not input_dir:
-            input_dir = os.getcwd()
-        
-        cache_dir = os.path.join(input_dir, "bls_cache")
-        cache_dir = os.path.abspath(cache_dir)  # Ensure absolute path
+            # For local execution, use directory based on input source
+            if input_source:
+                if os.path.isabs(input_source):
+                    input_dir = os.path.dirname(input_source)
+                else:
+                    input_dir = os.path.dirname(os.path.abspath(input_source))
+                if not input_dir:
+                    input_dir = os.getcwd()
+                cache_dir = os.path.join(input_dir, "bls_cache")
+            else:
+                cache_dir = os.path.abspath("bls_cache")
+            cache_dir = os.path.abspath(cache_dir)
         print(f"[STEP 2/5] Cache directory: {cache_dir}")
         
         # Test cache directory is writable
@@ -621,7 +661,6 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
         print(f"\n[COST SUMMARY] Cost calculation not available for model: {model_name}")
     
     # Create output DataFrame
-    print(f"[STEP 5/5] Saving results to: {output_csv}...")
     output_df = pd.DataFrame(results)
     
     # Add summary row with totals if we have results
@@ -644,8 +683,22 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
         summary_df = pd.DataFrame([summary_row])
         output_df = pd.concat([output_df, summary_df], ignore_index=True)
     
-    output_df.to_csv(output_csv, index=False)
-    print(f"[STEP 5/5] ✓ Saved {len(output_df)} rows to {output_csv}")
+    # Save output
+    if is_databricks and output_table:
+        print(f"[STEP 5/5] Saving results to Databricks table: {output_table}...")
+        # Convert pandas DataFrame to Spark DataFrame
+        spark_df = spark.createDataFrame(output_df)
+        # Write to table with overwrite mode
+        spark_df.write.mode("overwrite") \
+            .option('overwriteSchema', 'true') \
+            .saveAsTable(output_table)
+        print(f"[STEP 5/5] ✓ Saved {len(output_df)} rows to table {output_table}")
+    elif output_dest:
+        print(f"[STEP 5/5] Saving results to: {output_dest}...")
+        output_df.to_csv(output_dest, index=False)
+        print(f"[STEP 5/5] ✓ Saved {len(output_df)} rows to {output_dest}")
+    else:
+        raise ValueError("Either output_table (for Databricks) or output_dest (for local) must be provided")
     
     # Print cache directory summary
     try:
@@ -672,31 +725,75 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
 if __name__ == "__main__":
     import sys
     
-    # Default file paths
-    input_csv = "Untitled spreadsheet - Sheet1 (1).csv"
-    output_csv = "SEO_test_output.csv"
+    # Check if we're in Databricks
+    try:
+        from pyspark.sql import SparkSession  # type: ignore
+        spark = SparkSession.getActiveSession()
+        is_databricks = spark is not None
+    except:
+        is_databricks = False
+    
+    # Default settings
+    if is_databricks:
+        # Default to Databricks tables
+        input_table = "datascience_scratchpad.paystub_employer_city_metadata_pseo_251208"
+        output_table = "datascience_scratchpad.pseo_output_251209"
+        input_source = None
+        output_dest = None
+    else:
+        # Default to CSV files for local execution
+        input_source = "Untitled spreadsheet - Sheet1 (1).csv"
+        output_dest = "SEO_test_output.csv"
+        input_table = None
+        output_table = None
+        print("Databricks not working, running locally!")
+    
+    # Get num_entries from environment or command line
+    num_entries = 5
     
     # Allow command line arguments
+    # Usage: python process_seo_data.py [input_source/input_table] [output_dest/output_table] [num_entries]
     if len(sys.argv) > 1:
-        input_csv = sys.argv[1]
+        if is_databricks:
+            input_table = sys.argv[1]
+        else:
+            input_source = sys.argv[1]
     if len(sys.argv) > 2:
-        output_csv = sys.argv[2]
+        if is_databricks:
+            output_table = sys.argv[2]
+        else:
+            output_dest = sys.argv[2]
+    if len(sys.argv) > 3:
+        num_entries = sys.argv[3]
     
-    # Model name - user specified gpt-4.1, but that might not exist
-    # Try gpt-4.1 first, fall back to gpt-4o if not available
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1")  # Changed default to gpt-4o since gpt-4.1 doesn't exist
-    # If OPENAI_MODEL env var is set to gpt-4.1, we'll try it and fall back to gpt-4o
+    # Model name
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
     
-    # Process all entries
+    # Process entries
     print("=" * 60)
-    print("PROCESSING ALL ENTRIES")
+    if num_entries == "full":
+        print("PROCESSING ALL ENTRIES")
+    else:
+        print(f"PROCESSING {num_entries} ENTRIES")
     print("=" * 60)
     
     try:
-        process_seo_data(input_csv, output_csv, model=model, temperature=0.0, verbose=True)
+        process_seo_data(
+            input_source=input_source,
+            output_dest=output_dest,
+            input_table=input_table,
+            output_table=output_table,
+            num_entries=num_entries,
+            model=model,
+            temperature=0.0,
+            verbose=True
+        )
         print("\n" + "=" * 60)
         print("✓ ALL PROCESSING COMPLETE!")
-        print(f"✓ Results saved to: {output_csv}")
+        if is_databricks and output_table:
+            print(f"✓ Results saved to table: {output_table}")
+        elif output_dest:
+            print(f"✓ Results saved to: {output_dest}")
         print("=" * 60)
     except Exception as e:
         print(f"\nError: {e}")
