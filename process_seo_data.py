@@ -515,10 +515,10 @@ def process_seo_data(input_csv: str, output_csv: str, model: str = "gpt-4o",
     total_input_tokens = 0
     total_output_tokens = 0
     
-    for idx, row in tqdm(df.iterrows()):
-        print(f"[PROGRESS] Row {idx + 1}/{total_rows}: {row['employer_name']} - {row['employee_city']}, {row['employee_state']}")
-        
-        # Extract basic info
+    # Create progress bar with total, percentage, and ETA
+    pbar = tqdm(df.iterrows(), total=total_rows, desc="Processing entries", unit="entry")
+    for idx, row in pbar:
+        # Update progress bar description with current entry info
         employer_name = row['employer_name']
         employee_city = row['employee_city']
         employee_state = row['employee_state']
