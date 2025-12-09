@@ -441,7 +441,7 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
     if input_table:
         try:
             from pyspark.sql import SparkSession  # type: ignore
-            spark = SparkSession.builder.getOrCreate()
+            # spark = SparkSession.builder.getOrCreate()
             print(f"[STEP 1/5] Loading input from Databricks table: {input_table}...")
             df = spark.table(input_table).toPandas()
             # print(f"[STEP 1/5] ✓ Loaded {len(df)} rows from table")
@@ -696,7 +696,7 @@ def process_seo_data(input_source: str = None, output_dest: str = None,
         # Convert pandas DataFrame to Spark DataFrame
         if spark is None:
             from pyspark.sql import SparkSession  # type: ignore
-            spark = SparkSession.builder.getOrCreate()
+            # spark = SparkSession.builder.getOrCreate()
         spark_df = spark.createDataFrame(output_df)
         # Write to table with overwrite mode
         spark_df.write.mode("overwrite") \
