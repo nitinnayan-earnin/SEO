@@ -7,6 +7,9 @@ selenium>=4.15.0
 beautifulsoup4>=4.12.0
 httpx>=0.25.0
 
+# Fix typing_extensions compatibility issue
+typing_extensions>=4.5.0  # Required for langchain-core (includes Sentinel)
+
 # Optional: Install only if needed
 # pydynamodb>=0.7.4  # Only needed for SageMaker
 # boto3>=1.37.24  # Usually pre-installed in Databricks
